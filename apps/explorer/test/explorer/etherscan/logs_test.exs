@@ -2,10 +2,12 @@
 defmodule Explorer.Etherscan.LogsTest do
   use Explorer.DataCase
 
+  import Ecto.Query, only: [from: 2]
   import Explorer.Factory
 
   alias Explorer.Etherscan.Logs
-  alias Explorer.Chain.Transaction
+  alias Explorer.Chain.{Block, Transaction}
+  alias Explorer.Repo
 
   @first_topic_hex_string_1 "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
   @first_topic_hex_string_2 "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
@@ -989,6 +991,65 @@ defmodule Explorer.Etherscan.LogsTest do
       order = Enum.map(found_logs, &{&1.block_number, &1.index})
 
       assert order == Enum.sort(order)
+    end
+
+    test "topic-only logs skip a full page of non-consensus logs and still return later consensus logs" do
+      contract_address = insert(:contract_address)
+      first_topic = topic(@first_topic_hex_string_1)
+
+      non_consensus_block = insert(:block)
+      consensus_block = insert(:block, number: non_consensus_block.number + 1)
+
+      non_consensus_transaction =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block(non_consensus_block)
+
+      consensus_transaction =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block(consensus_block)
+
+      for i <- 1..1_000 do
+        insert(:log,
+          address: contract_address,
+          transaction: non_consensus_transaction,
+          block: non_consensus_block,
+          block_number: non_consensus_block.number,
+          index: i,
+          first_topic: first_topic
+        )
+      end
+
+      consensus_log =
+        insert(:log,
+          address: contract_address,
+          transaction: consensus_transaction,
+          block: consensus_block,
+          block_number: consensus_block.number,
+          index: 1,
+          first_topic: first_topic
+        )
+
+      # The factory only attaches transactions to consensus blocks, so the
+      # reorg is simulated after the fact.
+      Repo.update_all(from(b in Block, where: b.hash == ^non_consensus_block.hash), set: [consensus: false])
+
+      Repo.update_all(from(t in Transaction, where: t.hash == ^non_consensus_transaction.hash),
+        set: [block_consensus: false]
+      )
+
+      filter = %{
+        from_block: non_consensus_block.number,
+        to_block: consensus_block.number,
+        first_topic: first_topic
+      }
+
+      [found_log] = Logs.list_logs(filter)
+
+      assert found_log.block_number == consensus_log.block_number
+      assert found_log.index == consensus_log.index
+      assert found_log.block_consensus == true
     end
   end
 end

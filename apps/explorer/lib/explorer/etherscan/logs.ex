@@ -7,7 +7,7 @@ defmodule Explorer.Etherscan.Logs do
   """
 
   import Ecto.Query,
-    only: [dynamic: 2, from: 2, limit: 2, where: 2, where: 3, subquery: 1, order_by: 3, union_all: 2]
+    only: [dynamic: 2, from: 2, join: 5, limit: 2, where: 2, where: 3, subquery: 1, order_by: 3, union_all: 2]
 
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{DenormalizationHelper, Log, Transaction}
@@ -95,11 +95,16 @@ defmodule Explorer.Etherscan.Logs do
   end
 
   # Since address_hash was not present, we know that a topic filter has been
-  # applied. Ordering, paging and the LIMIT are applied to the `logs` table
-  # alone, inside a subquery, so the planner has to produce at most 1000 logs
-  # before joining `transactions`. Joining first and limiting afterwards lets
-  # the planner scan the whole `transactions` block range up front, which is
+  # applied. Ordering, paging and the LIMIT are applied inside a subquery over
+  # `logs` alone, so the planner has to produce at most 1000 logs before
+  # joining `transactions`. Joining first and limiting afterwards lets the
+  # planner scan the whole `transactions` block range up front, which is
   # prohibitively slow for wide ranges.
+  #
+  # Logs of non-consensus blocks are never deleted, so consensus has to be
+  # checked before the LIMIT: otherwise a page could come back short, or empty
+  # with no cursor to continue from, while later consensus logs still exist.
+  # The check is a primary-key lookup on `blocks` per candidate log.
   def list_logs(filter, paging_options) do
     paging_options = if is_nil(paging_options), do: @default_paging_options, else: paging_options
     prepared_filter = Map.merge(@base_filter, filter)
@@ -109,6 +114,7 @@ defmodule Explorer.Etherscan.Logs do
       |> where_topic_match(prepared_filter)
       |> where([log], log.block_number >= ^prepared_filter.from_block)
       |> where([log], log.block_number <= ^prepared_filter.to_block)
+      |> join(:inner, [log], block in assoc(log, :block), on: block.consensus == true)
       |> page_logs(paging_options)
       |> order_by([log], asc: log.block_number, asc: log.index)
       |> limit(1000)
