@@ -104,7 +104,8 @@ defmodule Explorer.Etherscan.Logs do
   # Logs of non-consensus blocks are never deleted, so consensus has to be
   # checked before the LIMIT: otherwise a page could come back short, or empty
   # with no cursor to continue from, while later consensus logs still exist.
-  # The check is a primary-key lookup on `blocks` per candidate log.
+  # The check uses the same predicate as `join_transaction_data/1`, so no row
+  # that makes it into the page is dropped by the outer join afterwards.
   def list_logs(filter, paging_options) do
     paging_options = if is_nil(paging_options), do: @default_paging_options, else: paging_options
     prepared_filter = Map.merge(@base_filter, filter)
@@ -114,7 +115,7 @@ defmodule Explorer.Etherscan.Logs do
       |> where_topic_match(prepared_filter)
       |> where([log], log.block_number >= ^prepared_filter.from_block)
       |> where([log], log.block_number <= ^prepared_filter.to_block)
-      |> join(:inner, [log], block in assoc(log, :block), on: block.consensus == true)
+      |> where_consensus()
       |> page_logs(paging_options)
       |> order_by([log], asc: log.block_number, asc: log.index)
       |> limit(1000)
@@ -122,6 +123,24 @@ defmodule Explorer.Etherscan.Logs do
     logs_query
     |> join_transaction_data()
     |> fetch_ordered()
+  end
+
+  # Keeps only logs whose consensus predicate matches the one applied by
+  # `join_transaction_data/1` in the current denormalization state. Each check
+  # is a primary-key lookup per candidate log. `transactions.block_consensus`
+  # can diverge from `blocks.consensus` (see
+  # `Explorer.Migrator.TransactionBlockConsensus`), which is why the predicate
+  # is not simply `blocks.consensus` in both states.
+  defp where_consensus(logs_query) do
+    if DenormalizationHelper.transactions_denormalization_finished?() do
+      join(logs_query, :inner, [log], transaction in Transaction,
+        on:
+          log.transaction_hash == transaction.hash and log.block_hash == transaction.block_hash and
+            transaction.block_consensus == true
+      )
+    else
+      join(logs_query, :inner, [log], block in assoc(log, :block), on: block.consensus == true)
+    end
   end
 
   # Re-selects the joined query through an outer subquery so that fields

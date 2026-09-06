@@ -7,6 +7,7 @@ defmodule Explorer.Etherscan.LogsTest do
 
   alias Explorer.Etherscan.Logs
   alias Explorer.Chain.{Block, Transaction}
+  alias Explorer.Chain.Cache.BackgroundMigrations
   alias Explorer.Repo
 
   @first_topic_hex_string_1 "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
@@ -1050,6 +1051,69 @@ defmodule Explorer.Etherscan.LogsTest do
       assert found_log.block_number == consensus_log.block_number
       assert found_log.index == consensus_log.index
       assert found_log.block_consensus == true
+    end
+
+    test "topic-only logs skip a full page of logs whose transactions lost consensus while their block did not" do
+      old_denormalization_finished = BackgroundMigrations.get_transactions_denormalization_finished()
+      BackgroundMigrations.set_transactions_denormalization_finished(true)
+
+      on_exit(fn ->
+        BackgroundMigrations.set_transactions_denormalization_finished(old_denormalization_finished)
+      end)
+
+      contract_address = insert(:contract_address)
+      first_topic = topic(@first_topic_hex_string_1)
+
+      stale_block = insert(:block)
+      consensus_block = insert(:block, number: stale_block.number + 1)
+
+      stale_transaction =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block(stale_block)
+
+      consensus_transaction =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block(consensus_block)
+
+      for i <- 1..1_000 do
+        insert(:log,
+          address: contract_address,
+          transaction: stale_transaction,
+          block: stale_block,
+          block_number: stale_block.number,
+          index: i,
+          first_topic: first_topic
+        )
+      end
+
+      consensus_log =
+        insert(:log,
+          address: contract_address,
+          transaction: consensus_transaction,
+          block: consensus_block,
+          block_number: consensus_block.number,
+          index: 1,
+          first_topic: first_topic
+        )
+
+      # `transactions.block_consensus` and `blocks.consensus` can diverge; the
+      # block keeps consensus here while the denormalized flag says otherwise.
+      Repo.update_all(from(t in Transaction, where: t.hash == ^stale_transaction.hash),
+        set: [block_consensus: false]
+      )
+
+      filter = %{
+        from_block: stale_block.number,
+        to_block: consensus_block.number,
+        first_topic: first_topic
+      }
+
+      [found_log] = Logs.list_logs(filter)
+
+      assert found_log.block_number == consensus_log.block_number
+      assert found_log.index == consensus_log.index
     end
   end
 end
