@@ -6,7 +6,8 @@ defmodule Explorer.Etherscan.Logs do
 
   """
 
-  import Ecto.Query, only: [dynamic: 2, from: 2, where: 2, where: 3, subquery: 1, order_by: 3, union_all: 2]
+  import Ecto.Query,
+    only: [dynamic: 2, from: 2, limit: 2, where: 2, where: 3, subquery: 1, order_by: 3, union_all: 2]
 
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{DenormalizationHelper, Log, Transaction}
@@ -87,62 +88,18 @@ defmodule Explorer.Etherscan.Logs do
       |> page_logs(paging_options)
       |> where_topic_match(prepared_filter, union_multiple_values: true)
 
-    if DenormalizationHelper.transactions_denormalization_finished?() do
-      all_transaction_logs_query =
-        from(log in subquery(logs_query),
-          join: transaction in Transaction,
-          on: log.transaction_hash == transaction.hash and log.block_hash == transaction.block_hash,
-          where: transaction.block_consensus == true,
-          select: map(log, ^@log_fields),
-          select_merge: %{
-            gas_price: transaction.gas_price,
-            gas_used: transaction.gas_used,
-            transaction_index: transaction.index,
-            block_hash: transaction.block_hash,
-            block_number: transaction.block_number,
-            block_timestamp: transaction.block_timestamp,
-            block_consensus: transaction.block_consensus
-          },
-          order_by: [asc: log.block_number, asc: log.index],
-          limit: 1000
-        )
-
-      all_transaction_logs_query
-      |> Chain.wrapped_union_subquery()
-      |> order_by([log], asc: log.block_number, asc: log.index)
-      |> Repo.replica().all()
-    else
-      all_transaction_logs_query =
-        from(log in subquery(logs_query),
-          join: transaction in Transaction,
-          on: log.transaction_hash == transaction.hash and log.block_hash == transaction.block_hash,
-          inner_join: block in assoc(transaction, :block),
-          where: block.consensus == true,
-          select: map(log, ^@log_fields),
-          select_merge: %{
-            gas_price: transaction.gas_price,
-            gas_used: transaction.gas_used,
-            transaction_index: transaction.index,
-            block_hash: transaction.block_hash,
-            block_number: transaction.block_number,
-            block_timestamp: block.timestamp,
-            block_consensus: block.consensus
-          },
-          order_by: [asc: log.block_number, asc: log.index],
-          limit: 1000
-        )
-
-      all_transaction_logs_query
-      |> Chain.wrapped_union_subquery()
-      |> order_by([log], asc: log.block_number, asc: log.index)
-      |> Repo.replica().all()
-    end
+    logs_query
+    |> join_transaction_data()
+    |> limit(1000)
+    |> fetch_ordered()
   end
 
-  # Since address_hash was not present, we know that a
-  # topic filter has been applied, so we use a different
-  # query that is optimized for a logs filter over an
-  # address_hash
+  # Since address_hash was not present, we know that a topic filter has been
+  # applied. Ordering, paging and the LIMIT are applied to the `logs` table
+  # alone, inside a subquery, so the planner has to produce at most 1000 logs
+  # before joining `transactions`. Joining first and limiting afterwards lets
+  # the planner scan the whole `transactions` block range up front, which is
+  # prohibitively slow for wide ranges.
   def list_logs(filter, paging_options) do
     paging_options = if is_nil(paging_options), do: @default_paging_options, else: paging_options
     prepared_filter = Map.merge(@base_filter, filter)
@@ -152,74 +109,64 @@ defmodule Explorer.Etherscan.Logs do
       |> where_topic_match(prepared_filter)
       |> where([log], log.block_number >= ^prepared_filter.from_block)
       |> where([log], log.block_number <= ^prepared_filter.to_block)
+      |> page_logs(paging_options)
+      |> order_by([log], asc: log.block_number, asc: log.index)
+      |> limit(1000)
 
+    logs_query
+    |> join_transaction_data()
+    |> fetch_ordered()
+  end
+
+  # Re-selects the joined query through an outer subquery so that fields
+  # taken from the `logs` subquery are loaded with their schema types (`Hash`
+  # structs instead of raw binaries), then applies the final ordering.
+  defp fetch_ordered(query) do
+    query
+    |> Chain.wrapped_union_subquery()
+    |> order_by([log], asc: log.block_number, asc: log.index)
+    |> Repo.replica().all()
+  end
+
+  # Wraps `logs_query` in a subquery and joins each log to its consensus
+  # transaction by `(hash, block_hash)`, a primary-key lookup per log. The
+  # selected shape is identical in both denormalization states.
+  defp join_transaction_data(logs_query) do
     if DenormalizationHelper.transactions_denormalization_finished?() do
-      block_transaction_query =
-        from(transaction in Transaction,
-          where: transaction.block_number >= ^prepared_filter.from_block,
-          where: transaction.block_number <= ^prepared_filter.to_block,
-          where: transaction.block_consensus == true,
-          select: %{
-            transaction_hash: transaction.hash,
-            gas_price: transaction.gas_price,
-            gas_used: transaction.gas_used,
-            transaction_index: transaction.index,
-            block_hash: transaction.block_hash,
-            block_number: transaction.block_number,
-            block_timestamp: transaction.block_timestamp,
-            block_consensus: transaction.block_consensus
-          }
-        )
-
-      query_with_block_transaction_data =
-        from(log in logs_query,
-          join: block_transaction_data in subquery(block_transaction_query),
-          on:
-            block_transaction_data.transaction_hash == log.transaction_hash and
-              block_transaction_data.block_hash == log.block_hash,
-          order_by: log.block_number,
-          limit: 1000,
-          select: block_transaction_data,
-          select_merge: map(log, ^@log_fields)
-        )
-
-      query_with_block_transaction_data
-      |> order_by([log], asc: log.index)
-      |> page_logs(paging_options)
-      |> Repo.replica().all()
+      from(log in subquery(logs_query),
+        join: transaction in Transaction,
+        on: log.transaction_hash == transaction.hash and log.block_hash == transaction.block_hash,
+        where: transaction.block_consensus == true,
+        select: map(log, ^@log_fields),
+        select_merge: %{
+          gas_price: transaction.gas_price,
+          gas_used: transaction.gas_used,
+          transaction_index: transaction.index,
+          block_hash: transaction.block_hash,
+          block_number: transaction.block_number,
+          block_timestamp: transaction.block_timestamp,
+          block_consensus: transaction.block_consensus
+        },
+        order_by: [asc: log.block_number, asc: log.index]
+      )
     else
-      block_transaction_query =
-        from(transaction in Transaction,
-          join: block in assoc(transaction, :block),
-          where: block.number >= ^prepared_filter.from_block,
-          where: block.number <= ^prepared_filter.to_block,
-          where: block.consensus == true,
-          select: %{
-            transaction_hash: transaction.hash,
-            gas_price: transaction.gas_price,
-            gas_used: transaction.gas_used,
-            transaction_index: transaction.index,
-            block_hash: block.hash,
-            block_number: block.number,
-            block_timestamp: block.timestamp,
-            block_consensus: block.consensus
-          }
-        )
-
-      query_with_block_transaction_data =
-        from(log in logs_query,
-          join: block_transaction_data in subquery(block_transaction_query),
-          on: block_transaction_data.transaction_hash == log.transaction_hash,
-          order_by: log.block_number,
-          limit: 1000,
-          select: block_transaction_data,
-          select_merge: map(log, ^@log_fields)
-        )
-
-      query_with_block_transaction_data
-      |> order_by([log], asc: log.index)
-      |> page_logs(paging_options)
-      |> Repo.replica().all()
+      from(log in subquery(logs_query),
+        join: transaction in Transaction,
+        on: log.transaction_hash == transaction.hash and log.block_hash == transaction.block_hash,
+        inner_join: block in assoc(transaction, :block),
+        where: block.consensus == true,
+        select: map(log, ^@log_fields),
+        select_merge: %{
+          gas_price: transaction.gas_price,
+          gas_used: transaction.gas_used,
+          transaction_index: transaction.index,
+          block_hash: transaction.block_hash,
+          block_number: transaction.block_number,
+          block_timestamp: block.timestamp,
+          block_consensus: block.consensus
+        },
+        order_by: [asc: log.block_number, asc: log.index]
+      )
     end
   end
 

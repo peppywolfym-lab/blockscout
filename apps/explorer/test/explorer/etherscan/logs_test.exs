@@ -860,5 +860,135 @@ defmodule Explorer.Etherscan.LogsTest do
 
       assert block_number_order == Enum.sort(block_number_order)
     end
+
+    test "paginates topic-only logs" do
+      contract_address = insert(:contract_address)
+      first_topic = topic(@first_topic_hex_string_1)
+
+      transaction_a =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block()
+
+      transaction_b =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block()
+
+      transaction_c =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block()
+
+      inserted_records =
+        for {transaction, count} <- [{transaction_a, 700}, {transaction_b, 700}, {transaction_c, 600}],
+            i <- 1..count do
+          insert(:log,
+            address: contract_address,
+            transaction: transaction,
+            block_number: transaction.block.number,
+            block: transaction.block,
+            index: i,
+            first_topic: first_topic
+          )
+        end
+
+      # A log with a different topic in the same range must not be returned.
+      insert(:log,
+        address: contract_address,
+        transaction: transaction_a,
+        block_number: transaction_a.block.number,
+        block: transaction_a.block,
+        index: 701,
+        first_topic: topic(@first_topic_hex_string_2)
+      )
+
+      filter = %{
+        from_block: transaction_a.block.number,
+        to_block: transaction_c.block.number,
+        first_topic: first_topic
+      }
+
+      first_found_logs = Logs.list_logs(filter)
+
+      assert Enum.count(first_found_logs) == 1_000
+
+      last_record = List.last(first_found_logs)
+
+      next_page_params = %{
+        log_index: last_record.index,
+        block_number: last_record.block_number
+      }
+
+      second_found_logs = Logs.list_logs(filter, next_page_params)
+
+      assert Enum.count(second_found_logs) == 1_000
+
+      all_found_logs = first_found_logs ++ second_found_logs
+
+      assert Enum.all?(all_found_logs, &(&1.first_topic == first_topic))
+
+      found_keys = MapSet.new(all_found_logs, &{&1.block_number, &1.index})
+      inserted_keys = MapSet.new(inserted_records, &{&1.block_number, &1.index})
+
+      assert MapSet.equal?(found_keys, inserted_keys)
+    end
+
+    test "topic-only logs are sorted by block and index" do
+      first_block = insert(:block)
+      second_block = insert(:block)
+      third_block = insert(:block)
+
+      contract_address = insert(:contract_address)
+      first_topic = topic(@first_topic_hex_string_1)
+
+      transaction_block1 =
+        %Transaction{} =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block(first_block)
+
+      transaction_block2 =
+        %Transaction{} =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block(second_block)
+
+      transaction_block3 =
+        %Transaction{} =
+        :transaction
+        |> insert(to_address: contract_address)
+        |> with_block(third_block)
+
+      for {transaction, block, index} <- [
+            {transaction_block3, third_block, 1},
+            {transaction_block1, first_block, 2},
+            {transaction_block2, second_block, 1},
+            {transaction_block1, first_block, 1}
+          ] do
+        insert(:log,
+          address: contract_address,
+          transaction: transaction,
+          block: block,
+          block_number: block.number,
+          index: index,
+          first_topic: first_topic
+        )
+      end
+
+      filter = %{
+        from_block: first_block.number,
+        to_block: third_block.number,
+        first_topic: first_topic
+      }
+
+      found_logs = Logs.list_logs(filter)
+
+      assert length(found_logs) == 4
+
+      order = Enum.map(found_logs, &{&1.block_number, &1.index})
+
+      assert order == Enum.sort(order)
+    end
   end
 end
