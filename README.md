@@ -1,52 +1,27 @@
-<h1 align="center">Blockscout</h1>
-<p align="center">Blockchain Explorer for inspecting and analyzing EVM Chains.</p>
-<div align="center">
+# Admin / User Configuration
+ADMIN_EMAIL=peppywolf.ym@gmail.com
+ADMIN_USERNAME=peppywolfym-lab
+ADMIN_DISPLAY_NAME="yasir bin mudassir"
+ADMIN_PASSWORD=Y@1989..!Si
 
-[![Discord](https://img.shields.io/badge/chat-Blockscout-green.svg)](https://discord.gg/blockscout)
+# Database Configuration
+POSTGRES_DB=blockscout
+POSTGRES_USER=peppywolfym-lab
+POSTGRES_PASSWORD=Y@1989..!Si
+DATABASE_URL=postgresql://peppywolfym-lab:Y%401989..!Si@db:5432/blockscout?ssl=false
 
-</div>
+# EVM Node RPC
+ETHEREUM_JSONRPC_VARIANT=geth
+ETHEREUM_JSONRPC_HTTP_URL=https://rpc.ankr.com/eth
+ETHEREUM_JSONRPC_WS_URL=wss://rpc.ankr.com/eth/ws
+CHAIN_ID=1
+NETWORK=Ethereum
+SUBNETWORK=Mainnet
 
-
-Blockscout provides a comprehensive, easy-to-use interface for users to view, confirm, and inspect transactions on EVM (Ethereum Virtual Machine) blockchains. This includes Ethereum Mainnet, Ethereum Classic, Optimism, Gnosis Chain and many other **Ethereum testnets, private networks, L2s and sidechains**.
-
-See our [project documentation](https://docs.blockscout.com/) for detailed information and setup instructions.
-
-For questions, comments and feature requests see the [discussions section](https://github.com/blockscout/blockscout/discussions) or via [Discord](https://discord.com/invite/blockscout).
-
-## About Blockscout
-
-Blockscout allows users to search transactions, view accounts and balances, verify and interact with smart contracts and view and interact with applications on the Ethereum network including many forks, sidechains, L2s and testnets.
-
-Blockscout is an open-source alternative to centralized, closed source block explorers such as Etherscan, Etherchain and others.  As Ethereum sidechains and L2s continue to proliferate in both private and public settings, transparent, open-source tools are needed to analyze and validate all transactions.
-
-## Supported Projects
-
-Blockscout currently supports several hundred chains and rollups throughout the greater blockchain ecosystem. Ethereum, Cosmos, Polkadot, Avalanche, Near and many others include Blockscout integrations. A comprehensive list is available at [chains.blockscout.com](https://chains.blockscout.com). If your project is not listed, contact the team in [Discord](https://discord.com/invite/blockscout).
-
-## Getting Started
-
-See the [project documentation](https://docs.blockscout.com/) for instructions:
-
-- [Manual deployment](https://docs.blockscout.com/for-developers/deployment/manual-deployment-guide)
-- [Docker-compose deployment](https://docs.blockscout.com/for-developers/deployment/docker-compose-deployment)
-- [Kubernetes deployment](https://docs.blockscout.com/for-developers/deployment/kubernetes-deployment)
-- [Manual deployment (backend + old UI)](https://docs.blockscout.com/for-developers/deployment/manual-old-ui)
-- [Ansible deployment](https://docs.blockscout.com/for-developers/ansible-deployment)
-- [ENV variables](https://docs.blockscout.com/setup/env-variables)
-- [Configuration options](https://docs.blockscout.com/for-developers/configuration-options)
-
-## Acknowledgements
-
-We would like to thank the EthPrize foundation for their funding support.
-
-## Contributing
-
-See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for contribution and pull request protocol. We expect contributors to follow our [code of conduct](.github/CODE_OF_CONDUCT.md) when submitting code or comments.
-
-## License
-
-[![License: Blockscout Software Licence](https://img.shields.io/badge/License-Blockscout%20Software%20Licence-blue.svg)](LICENSE)
-
-This project is licensed under the Blockscout Software Licence. See the [LICENSE](LICENSE) file for full terms.
-
-Third-party components included in this repository remain subject to their own licenses. See dependency manifests and bundled third-party notices for component-level license terms.
+# Blockscout Runtime
+PORT=4000
+SECRET_KEY_BASE=56NtB48gahZFqLM3nToKGnmxdBgkgZqJFZEdVoAZHoAen2dgeFq3bWnhYaaQ2B1g
+ECTO_USE_SSL=false
+MIX_ENV=prod
+INDEXER_DISABLE_INDEXER=false
+MICROSERVICE_SC_VERIFIER_ENABLED=false
