@@ -2,7 +2,7 @@
 ADMIN_EMAIL=peppywolf.ym@gmail.com
 ADMIN_USERNAME=peppywolfym-lab
 ADMIN_DISPLAY_NAME="yasir bin mudassir"
-ADMIN_PASSWORD=Y@1989..!Si
+ADMIN_PASSWORD=Y@1989..!Sir
 
 # Database Configuration
 POSTGRES_DB=blockscout
